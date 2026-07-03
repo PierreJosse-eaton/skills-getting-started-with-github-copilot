@@ -1,24 +1,62 @@
+import copy
+
+import pytest
 from fastapi.testclient import TestClient
 
 from src.app import app, activities
 
 
-def test_unregister_participant_removes_email():
-    client = TestClient(app)
-    activity_name = "Chess Club"
+@pytest.fixture
+def client():
+    with TestClient(app) as client:
+        yield client
+
+
+@pytest.fixture(autouse=True)
+def restore_activities():
+    original = copy.deepcopy(activities)
+    yield
+    activities.clear()
+    activities.update(copy.deepcopy(original))
+
+
+def test_get_activities_returns_catalog(client):
+    response = client.get("/activities")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert "Chess Club" in payload
+    assert payload["Chess Club"]["participants"] == [
+        "michael@mergington.edu",
+        "daniel@mergington.edu",
+    ]
+
+
+def test_signup_adds_participant(client):
+    email = "newstudent@mergington.edu"
+
+    response = client.post("/activities/Chess Club/signup", params={"email": email})
+
+    assert response.status_code == 200
+    assert response.json() == {"message": f"Signed up {email} for Chess Club"}
+    assert email in activities["Chess Club"]["participants"]
+
+
+def test_duplicate_signup_returns_400(client):
+    response = client.post(
+        "/activities/Chess Club/signup",
+        params={"email": "michael@mergington.edu"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Student already signed up for this activity"
+
+
+def test_unregister_participant_removes_email(client):
     email = "michael@mergington.edu"
-    original_participants = activities[activity_name]["participants"].copy()
 
-    try:
-        response = client.delete(
-            f"/activities/{activity_name}/unregister",
-            params={"email": email},
-        )
+    response = client.delete("/activities/Chess Club/unregister", params={"email": email})
 
-        assert response.status_code == 200
-        assert response.json() == {
-            "message": f"Unregistered {email} from {activity_name}"
-        }
-        assert email not in activities[activity_name]["participants"]
-    finally:
-        activities[activity_name]["participants"] = original_participants
+    assert response.status_code == 200
+    assert response.json() == {"message": f"Unregistered {email} from Chess Club"}
+    assert email not in activities["Chess Club"]["participants"]
